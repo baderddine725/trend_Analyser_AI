@@ -1,9 +1,12 @@
 from flask import Flask, render_template, jsonify, request
 import os
-from utils.trend_analyzer import TrendAnalyzer
-from utils.content_recommender import ContentRecommender
-from utils.api_client import SocialMediaAPI
-from utils.mock_data import get_mock_trends
+# Import utilities from our package
+from utils import (
+    TrendAnalyzer,
+    ContentRecommender,
+    SocialMediaAPI,
+    get_mock_trends
+)
 from db import db, init_db
 from models import Platform, Trend, Content
 
