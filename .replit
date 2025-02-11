@@ -13,10 +13,10 @@ author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
-args = "Flask Web Server"
+args = "FastAPI Server"
 
 [[workflows.workflow]]
-name = "Flask Web Server"
+name = "FastAPI Server"
 author = "agent"
 
 [workflows.workflow.metadata]
@@ -27,12 +27,16 @@ task = "packager.installForAll"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "python app.py"
-waitForPort = 5000
+args = "python main.py"
+waitForPort = 5001
 
 [deployment]
-run = ["sh", "-c", "python app.py"]
+run = ["sh", "-c", "python main.py"]
 
 [[ports]]
 localPort = 5000
 externalPort = 80
+
+[[ports]]
+localPort = 5001
+externalPort = 3000

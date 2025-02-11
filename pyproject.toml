@@ -8,4 +8,11 @@ dependencies = [
     "flask>=3.1.0",
     "flask-migrate>=4.1.0",
     "psycopg2-binary>=2.9.10",
+    "python-jose[cryptography]>=3.3.0",
+    "passlib[bcrypt]>=1.7.4",
+    "sqlalchemy>=2.0.38",
+    "fastapi>=0.115.8",
+    "uvicorn>=0.34.0",
+    "jinja2>=3.1.5",
+    "python-multipart>=0.0.20",
 ]
