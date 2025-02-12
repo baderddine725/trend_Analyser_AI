@@ -5,8 +5,9 @@ from fastapi.responses import JSONResponse
 import logging
 import sys
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
+from sqlalchemy import desc
 
 # Import utilities
 from utils import (
@@ -15,6 +16,9 @@ from utils import (
     SocialMediaAPI,
     get_mock_trends
 )
+from utils.trend_predictor import TrendPredictor
+from models import Trend, TrendPrediction, TrendEngagement # Assuming models.py is defined elsewhere
+
 
 # Configure logging
 logging.basicConfig(
@@ -40,6 +44,7 @@ templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 api_client = SocialMediaAPI()
 trend_analyzer = TrendAnalyzer()
 content_recommender = ContentRecommender()
+trend_predictor = TrendPredictor() # Added trend predictor initialization
 
 @app.get("/")
 async def index(request: Request):
@@ -91,6 +96,60 @@ async def generate_content(content_type: str, topic: str):
         ]
     }
     return content
+
+@app.get("/api/trend-predictions")
+async def get_trend_predictions():
+    try:
+        # Get historical trends from the last 30 days
+        thirty_days_ago = datetime.utcnow() - timedelta(days=30)
+        historical_trends = []
+
+        from db import db  # Import here to avoid circular imports
+
+        # Using context manager for database session
+        with db.session() as session:
+            db_trends = session.query(Trend).filter(
+                Trend.created_at >= thirty_days_ago
+            ).all()
+
+            for trend in db_trends:
+                historical_trends.append({
+                    'text': trend.text,
+                    'timestamp': trend.created_at.strftime('%Y-%m-%d %H:%M:%S'),
+                    'view_count': trend.view_count
+                })
+
+            # Get predictions for trending topics
+            topic_forecasts = trend_predictor.get_trending_topics_forecast(historical_trends)
+
+            # Store predictions in database
+            for topic, predictions in topic_forecasts.items():
+                trend = session.query(Trend).filter(
+                    Trend.text.ilike(topic)
+                ).order_by(desc(Trend.created_at)).first()
+
+                if trend:
+                    for pred in predictions:
+                        prediction = TrendPrediction(
+                            trend_id=trend.id,
+                            predicted_views=pred['predicted_views'],
+                            confidence_score=pred['confidence'],
+                            prediction_date=datetime.utcnow(),
+                            target_date=datetime.strptime(pred['date'], '%Y-%m-%d')
+                        )
+                        session.add(prediction)
+
+            session.commit()
+
+        return {
+            'predictions': topic_forecasts,
+            'updated_at': datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+        }
+    except Exception as e:
+        logger.error(f"Error generating trend predictions: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 
 if __name__ == "__main__":
     import uvicorn

@@ -89,7 +89,7 @@ document.getElementById('contentForm').addEventListener('submit', async (e) => {
         });
         const data = await response.json();
         displayContentSuggestions(data);
-        
+
         // Fetch recommendations for the topic
         const recResponse = await fetch(`/api/recommendations?topic=${encodeURIComponent(topic)}`);
         const recData = await recResponse.json();
@@ -145,9 +145,76 @@ function displayRecommendations(data) {
     `;
 }
 
+async function fetchTrendPredictions() {
+    try {
+        const response = await fetch('/api/trend-predictions');
+        const data = await response.json();
+        displayTrendPredictions(data);
+    } catch (error) {
+        console.error('Error fetching trend predictions:', error);
+    }
+}
+
+function displayTrendPredictions(data) {
+    const container = document.getElementById('recommendations');
+    if (!container) return;
+
+    let predictionsHtml = '<div class="mb-4"><h5>Trend Predictions</h5>';
+
+    for (const [topic, predictions] of Object.entries(data.predictions)) {
+        predictionsHtml += `
+            <div class="card mb-3">
+                <div class="card-header">
+                    <h6>${topic}</h6>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-sm">
+                            <thead>
+                                <tr>
+                                    <th>Date</th>
+                                    <th>Predicted Views</th>
+                                    <th>Confidence</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${predictions.map(pred => `
+                                    <tr>
+                                        <td>${pred.date}</td>
+                                        <td>${pred.predicted_views.toLocaleString()}</td>
+                                        <td>
+                                            <div class="progress">
+                                                <div class="progress-bar" role="progressbar" 
+                                                    style="width: ${pred.confidence}%" 
+                                                    aria-valuenow="${pred.confidence}" 
+                                                    aria-valuemin="0" 
+                                                    aria-valuemax="100">
+                                                    ${pred.confidence}%
+                                                </div>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    predictionsHtml += `
+        <small class="text-muted">Last updated: ${data.updated_at}</small>
+    </div>`;
+
+    container.innerHTML = predictionsHtml;
+}
+
 // Initialize page
 document.addEventListener('DOMContentLoaded', () => {
     feather.replace();
     fetchTrends();
+    fetchTrendPredictions();
     setInterval(fetchTrends, 300000); // Refresh every 5 minutes
+    setInterval(fetchTrendPredictions, 300000); // Refresh predictions every 5 minutes
 });
