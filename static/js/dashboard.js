@@ -174,6 +174,7 @@ function displayTrendPredictions(data) {
                                 <tr>
                                     <th>Date</th>
                                     <th>Predicted Views</th>
+                                    <th>Range</th>
                                     <th>Confidence</th>
                                 </tr>
                             </thead>
@@ -183,8 +184,14 @@ function displayTrendPredictions(data) {
                                         <td>${pred.date}</td>
                                         <td>${pred.predicted_views.toLocaleString()}</td>
                                         <td>
+                                            <small class="text-muted">
+                                                ${pred.lower_bound.toLocaleString()} - ${pred.upper_bound.toLocaleString()}
+                                            </small>
+                                        </td>
+                                        <td>
                                             <div class="progress">
-                                                <div class="progress-bar" role="progressbar" 
+                                                <div class="progress-bar ${pred.confidence > 70 ? 'bg-success' : pred.confidence > 40 ? 'bg-warning' : 'bg-danger'}" 
+                                                    role="progressbar" 
                                                     style="width: ${pred.confidence}%" 
                                                     aria-valuenow="${pred.confidence}" 
                                                     aria-valuemin="0" 

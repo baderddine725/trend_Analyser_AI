@@ -1,45 +1,63 @@
 from datetime import datetime
-from db import db
+from sqlalchemy import Column, Integer, String, DateTime, JSON, ForeignKey, Float
+from sqlalchemy.orm import relationship
+from database import Base
 
-class Platform(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(50), nullable=False)
-    trends = db.relationship('Trend', backref='platform', lazy=True)
+class Platform(Base):
+    __tablename__ = "platform"
 
-class Trend(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    text = db.Column(db.String(200), nullable=False)
-    hashtags = db.Column(db.JSON)
-    view_count = db.Column(db.Integer)
-    platform_id = db.Column(db.Integer, db.ForeignKey('platform.id'), nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    content_suggestions = db.relationship('Content', backref='trend', lazy=True)
-    # New fields for trend prediction
-    prediction_data = db.relationship('TrendPrediction', backref='trend', lazy=True)
-    engagement_history = db.relationship('TrendEngagement', backref='trend', lazy=True)
+    id = Column(Integer, primary_key=True)
+    name = Column(String(50), nullable=False)
+    trends = relationship('Trend', back_populates='platform')
 
-class Content(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    type = db.Column(db.String(50), nullable=False)  # video, image, etc.
-    suggestion = db.Column(db.Text, nullable=False)
-    format = db.Column(db.String(50))
-    estimated_engagement = db.Column(db.String(20))
-    trend_id = db.Column(db.Integer, db.ForeignKey('trend.id'), nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+class Trend(Base):
+    __tablename__ = "trend"
 
-# New models for trend prediction
-class TrendPrediction(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    trend_id = db.Column(db.Integer, db.ForeignKey('trend.id'), nullable=False)
-    predicted_views = db.Column(db.Integer)
-    confidence_score = db.Column(db.Float)
-    prediction_date = db.Column(db.DateTime)
-    target_date = db.Column(db.DateTime)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    id = Column(Integer, primary_key=True)
+    text = Column(String(200), nullable=False)
+    hashtags = Column(JSON)
+    view_count = Column(Integer)
+    platform_id = Column(Integer, ForeignKey('platform.id'), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
-class TrendEngagement(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    trend_id = db.Column(db.Integer, db.ForeignKey('trend.id'), nullable=False)
-    view_count = db.Column(db.Integer)
-    engagement_date = db.Column(db.DateTime)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    platform = relationship('Platform', back_populates='trends')
+    content_suggestions = relationship('Content', back_populates='trend')
+    prediction_data = relationship('TrendPrediction', back_populates='trend')
+    engagement_history = relationship('TrendEngagement', back_populates='trend')
+
+class Content(Base):
+    __tablename__ = "content"
+
+    id = Column(Integer, primary_key=True)
+    type = Column(String(50), nullable=False)
+    suggestion = Column(String)
+    format = Column(String(50))
+    estimated_engagement = Column(String(20))
+    trend_id = Column(Integer, ForeignKey('trend.id'), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    trend = relationship('Trend', back_populates='content_suggestions')
+
+class TrendPrediction(Base):
+    __tablename__ = "trend_prediction"
+
+    id = Column(Integer, primary_key=True)
+    trend_id = Column(Integer, ForeignKey('trend.id'), nullable=False)
+    predicted_views = Column(Integer)
+    confidence_score = Column(Float)
+    prediction_date = Column(DateTime)
+    target_date = Column(DateTime)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    trend = relationship('Trend', back_populates='prediction_data')
+
+class TrendEngagement(Base):
+    __tablename__ = "trend_engagement"
+
+    id = Column(Integer, primary_key=True)
+    trend_id = Column(Integer, ForeignKey('trend.id'), nullable=False)
+    view_count = Column(Integer)
+    engagement_date = Column(DateTime)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    trend = relationship('Trend', back_populates='engagement_history')
