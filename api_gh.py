@@ -2,10 +2,10 @@ import requests
 import base64
 import os
 
-GITHUB_TOKEN = "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"
+GITHUB_TOKEN = "********************"
 REPO_NAME = "baderddine725/trend_Analyser_AI"
 BRANCH = "main"
-FOLDER_PATH = "C:\\Users\LENOVO\Desktop\TrendTitan-1\TrendTitan-1"
+FOLDER_PATH = "***************"
 
 # GitHub API URL
 GITHUB_API = f"https://api.github.com/repos/{REPO_NAME}/contents/"
