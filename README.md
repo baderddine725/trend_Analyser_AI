@@ -16,7 +16,10 @@ A FastAPI-based web application that analyzes social media trends and provides c
 - Backend: FastAPI/Python
 - Database: PostgreSQL
 - ORM: SQLAlchemy
+- Frontend: HTML/CSS/JavaScript
 - UI Framework: Bootstrap 5
+- Charts: Chart.js
+- Icons: Feather Icons
 
 
 
@@ -33,11 +36,15 @@ A FastAPI-based web application that analyzes social media trends and provides c
 ## Project Structure
 
 ```
+├── static/           # Static assets
+│   ├── css/         # Stylesheets
+│   └── js/          # JavaScript files
+├── templates/        # HTML templates
 ├── utils/           # Utility modules
 ├── main.py          # FastAPI application
 ├── database.py      # Database configuration
 ├── models.py        # SQLAlchemy models
-└── app.py           # Flask application (alternative)
+└── app.py           # Flask application 
 ```
 
 ## API Endpoints
