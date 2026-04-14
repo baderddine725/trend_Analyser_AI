@@ -4,12 +4,14 @@ version = "0.1.0"
 description = "Add your description here"
 requires-python = ">=3.11"
 dependencies = [
-    "flask-sqlalchemy>=3.1.1",
-    "flask>=3.1.0",
-    "flask-migrate>=4.1.0",
+    "beautifulsoup4>=4.14.2",
     "psycopg2-binary>=2.9.10",
+    "pytrends>=4.9.2",
+    "python-dotenv>=1.1.1",
     "python-jose[cryptography]>=3.3.0",
     "passlib[bcrypt]>=1.7.4",
+    "requests>=2.32.5",
+    "snscrape>=0.7.0.20230622",
     "sqlalchemy>=2.0.38",
     "fastapi>=0.115.8",
     "uvicorn>=0.34.0",

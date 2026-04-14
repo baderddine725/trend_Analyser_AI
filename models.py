@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, DateTime, JSON, ForeignKey, Float
+from sqlalchemy import Column, Integer, String, DateTime, JSON, ForeignKey, Float, UniqueConstraint
 from sqlalchemy.orm import relationship
 from database import Base
 
@@ -12,12 +12,24 @@ class Platform(Base):
 
 class Trend(Base):
     __tablename__ = "trend"
+    __table_args__ = (
+        UniqueConstraint("platform_id", "text", "dedup_bucket", name="uq_trend_platform_text_bucket"),
+    )
 
     id = Column(Integer, primary_key=True)
     text = Column(String(200), nullable=False)
     hashtags = Column(JSON)
     view_count = Column(Integer)
+    source_url = Column(String(500))
+    language = Column(String(20), default="en")
     platform_id = Column(Integer, ForeignKey('platform.id'), nullable=False)
+    dedup_bucket = Column(String(20), nullable=False)
+    sentiment_label = Column(String(20), default="neutral")
+    sentiment_score = Column(Float, default=0.0)
+    topic_label = Column(String(100), default="general")
+    trend_score = Column(Float, default=0.0)
+    last_seen_at = Column(DateTime, default=datetime.utcnow)
+    collected_at = Column(DateTime, default=datetime.utcnow)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     platform = relationship('Platform', back_populates='trends')

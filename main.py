@@ -1,25 +1,22 @@
-from fastapi import FastAPI, Request, HTTPException, Depends
-from fastapi.templating import Jinja2Templates
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import JSONResponse
-from sqlalchemy.orm import Session
-import logging
-import sys
-import os
 from datetime import datetime, timedelta
 from pathlib import Path
-from sqlalchemy import desc
+import logging
+import os
+import sys
+import threading
+from dotenv import load_dotenv
 
-# Import utilities
-from utils import (
-    TrendAnalyzer,
-    ContentRecommender,
-    SocialMediaAPI,
-    get_mock_trends
-)
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from sqlalchemy import desc, text
+from sqlalchemy.orm import Session
+
+from database import SessionLocal, get_db, init_db
+from models import Content, Trend, TrendPrediction
+from services import ETLService
+from utils import ContentRecommender, TrendAnalyzer
 from utils.trend_predictor import TrendPredictor
-from models import Trend, TrendPrediction, TrendEngagement, Platform, Content
-from database import get_db, init_db
 
 # Configure logging
 logging.basicConfig(
@@ -32,6 +29,9 @@ logger = logging.getLogger(__name__)
 # Get the absolute path of the current directory
 BASE_DIR = Path(__file__).resolve().parent
 
+# Load .env values for runtime configuration.
+load_dotenv()
+
 # Initialize FastAPI app
 app = FastAPI(title="Social Media Trend Analyzer")
 
@@ -42,10 +42,88 @@ app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="stat
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
 # Initialize components
-api_client = SocialMediaAPI()
 trend_analyzer = TrendAnalyzer()
 content_recommender = ContentRecommender()
 trend_predictor = TrendPredictor()
+etl_service = ETLService()
+
+_etl_thread = None
+_etl_stop_event = threading.Event()
+_ops_lock = threading.Lock()
+_ops_state = {
+    "etl_interval_seconds": int(os.getenv("ETL_INTERVAL_SECONDS", "900")),
+    "thread_started_at": None,
+    "last_run_started_at": None,
+    "last_run_finished_at": None,
+    "last_run_duration_ms": None,
+    "last_run_success": None,
+    "last_error": None,
+    "last_result": None,
+    "total_runs": 0,
+    "success_runs": 0,
+    "failed_runs": 0,
+}
+
+
+def _serialize_trend(trend: Trend):
+    return {
+        "id": trend.id,
+        "text": trend.text,
+        "platform": trend.platform.name if trend.platform else None,
+        "hashtags": trend.hashtags or [],
+        "view_count": trend.view_count or 0,
+        "source_url": trend.source_url,
+        "language": trend.language,
+        "topic_label": trend.topic_label,
+        "sentiment_label": trend.sentiment_label,
+        "sentiment_score": trend.sentiment_score,
+        "trend_score": trend.trend_score,
+        "collected_at": trend.collected_at.isoformat() if trend.collected_at else None,
+        "last_seen_at": trend.last_seen_at.isoformat() if trend.last_seen_at else None,
+    }
+
+
+def _run_periodic_etl(interval_seconds: int):
+    logger.info("Periodic ETL thread started (interval=%ss)", interval_seconds)
+    with _ops_lock:
+        _ops_state["thread_started_at"] = datetime.utcnow().isoformat()
+    while not _etl_stop_event.is_set():
+        db = SessionLocal()
+        started = datetime.utcnow()
+        with _ops_lock:
+            _ops_state["last_run_started_at"] = started.isoformat()
+            _ops_state["total_runs"] += 1
+        try:
+            result = etl_service.run_collection_cycle(db)
+            finished = datetime.utcnow()
+            duration_ms = int((finished - started).total_seconds() * 1000)
+            with _ops_lock:
+                _ops_state["last_run_finished_at"] = finished.isoformat()
+                _ops_state["last_run_duration_ms"] = duration_ms
+                _ops_state["last_run_success"] = True
+                _ops_state["last_error"] = None
+                _ops_state["last_result"] = result
+                _ops_state["success_runs"] += 1
+            logger.info(
+                "Periodic ETL completed. inserted=%s updated=%s processed=%s",
+                result["inserted"],
+                result["updated"],
+                result["processed_count"],
+            )
+        except Exception as exc:
+            logger.error("Periodic ETL cycle failed: %s", exc, exc_info=True)
+            finished = datetime.utcnow()
+            duration_ms = int((finished - started).total_seconds() * 1000)
+            with _ops_lock:
+                _ops_state["last_run_finished_at"] = finished.isoformat()
+                _ops_state["last_run_duration_ms"] = duration_ms
+                _ops_state["last_run_success"] = False
+                _ops_state["last_error"] = str(exc)
+                _ops_state["failed_runs"] += 1
+            db.rollback()
+        finally:
+            db.close()
+        _etl_stop_event.wait(interval_seconds)
 
 # Initialize database on startup
 @app.on_event("startup")
@@ -53,10 +131,26 @@ async def startup_event():
     logger.info("Initializing database...")
     try:
         init_db()
+        interval_seconds = int(os.getenv("ETL_INTERVAL_SECONDS", "900"))
+        with _ops_lock:
+            _ops_state["etl_interval_seconds"] = interval_seconds
+        global _etl_thread
+        if _etl_thread is None:
+            _etl_thread = threading.Thread(
+                target=_run_periodic_etl,
+                args=(interval_seconds,),
+                daemon=True,
+            )
+            _etl_thread.start()
         logger.info("Database initialized successfully")
     except Exception as e:
         logger.error(f"Database initialization failed: {str(e)}")
         sys.exit(1)
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    _etl_stop_event.set()
 
 @app.get("/")
 async def index(request: Request):
@@ -79,41 +173,13 @@ async def dashboard(request: Request):
 @app.get("/api/trends")
 async def get_trends(db: Session = Depends(get_db)):
     try:
-        logger.info("Fetching trends data")
-        # Try to get real data, fallback to mock data
-        try:
-            tiktok_trends = api_client.get_tiktok_trends()
-            twitter_trends = api_client.get_twitter_trends()
-        except Exception as e:
-            logger.warning(f"Failed to get real trends, falling back to mock data: {str(e)}")
-            tiktok_trends, twitter_trends = get_mock_trends()
-
-        analyzed_trends = trend_analyzer.analyze_trends(tiktok_trends, twitter_trends)
-
-        # Store trends in database
-        platforms = {
-            'tiktok': db.query(Platform).filter_by(name='TikTok').first() or Platform(name='TikTok'),
-            'twitter': db.query(Platform).filter_by(name='Twitter').first() or Platform(name='Twitter')
-        }
-
-        for platform_name, platform in platforms.items():
-            if not platform.id:
-                db.add(platform)
-        db.commit()
-
-        # Store trends
-        trends = tiktok_trends + twitter_trends
-        for t in trends:
-            platform = platforms['tiktok'] if t in tiktok_trends else platforms['twitter']
-            trend = Trend(
-                text=t['text'],
-                hashtags=t.get('hashtags', []),
-                view_count=t.get('views', t.get('tweet_count', 0)),
-                platform=platform
-            )
-            db.add(trend)
-        db.commit()
-
+        # Backward-compatible endpoint now delegates to v1 ETL and analysis.
+        etl_service.run_collection_cycle(db)
+        live = etl_service.get_live_trends(db, limit=50)
+        tiktok_trends = [{"text": t.text} for t in live if (t.platform and t.platform.name == "tiktok")]
+        x_trends = [{"text": t.text} for t in live if (t.platform and t.platform.name == "x")]
+        analyzed_trends = trend_analyzer.analyze_trends(tiktok_trends, x_trends)
+        analyzed_trends["live_trends"] = [_serialize_trend(t) for t in live]
         return analyzed_trends
     except Exception as e:
         logger.error(f"Error in get_trends: {str(e)}", exc_info=True)
@@ -223,16 +289,142 @@ async def generate_content(content_type: str, topic: str, db: Session = Depends(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/api/v1/etl/run")
+async def run_etl_now(db: Session = Depends(get_db)):
+    try:
+        started = datetime.utcnow()
+        with _ops_lock:
+            _ops_state["last_run_started_at"] = started.isoformat()
+            _ops_state["total_runs"] += 1
+        result = etl_service.run_collection_cycle(db)
+        finished = datetime.utcnow()
+        duration_ms = int((finished - started).total_seconds() * 1000)
+        with _ops_lock:
+            _ops_state["last_run_finished_at"] = finished.isoformat()
+            _ops_state["last_run_duration_ms"] = duration_ms
+            _ops_state["last_run_success"] = True
+            _ops_state["last_error"] = None
+            _ops_state["last_result"] = result
+            _ops_state["success_runs"] += 1
+        return result
+    except Exception as e:
+        logger.error(f"Error running ETL now: {str(e)}", exc_info=True)
+        with _ops_lock:
+            _ops_state["last_run_success"] = False
+            _ops_state["last_error"] = str(e)
+            _ops_state["failed_runs"] += 1
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/trends/live")
+async def get_live_trends(limit: int = 50, db: Session = Depends(get_db)):
+    try:
+        trends = etl_service.get_live_trends(db, limit=max(1, min(limit, 200)))
+        return {"count": len(trends), "items": [_serialize_trend(t) for t in trends]}
+    except Exception as e:
+        logger.error(f"Error fetching live trends: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/trends/top")
+async def get_top_trends(limit: int = 20, db: Session = Depends(get_db)):
+    try:
+        trends = etl_service.get_top_trends(db, limit=max(1, min(limit, 200)))
+        return {"count": len(trends), "items": [_serialize_trend(t) for t in trends]}
+    except Exception as e:
+        logger.error(f"Error fetching top trends: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/health")
+async def basic_health(db: Session = Depends(get_db)):
+    try:
+        db.execute(text("SELECT 1"))
+        return {"status": "ok", "database": "ok", "timestamp": datetime.utcnow().isoformat()}
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"health check failed: {e}")
+
+
+@app.get("/api/v1/ops/etl-status")
+async def etl_status():
+    with _ops_lock:
+        state = dict(_ops_state)
+    return {
+        "worker": {
+            "thread_alive": _etl_thread.is_alive() if _etl_thread else False,
+            "stop_requested": _etl_stop_event.is_set(),
+            "interval_seconds": state["etl_interval_seconds"],
+        },
+        "runs": {
+            "total": state["total_runs"],
+            "success": state["success_runs"],
+            "failed": state["failed_runs"],
+            "last_success": state["last_run_success"],
+        },
+        "timing": {
+            "thread_started_at": state["thread_started_at"],
+            "last_run_started_at": state["last_run_started_at"],
+            "last_run_finished_at": state["last_run_finished_at"],
+            "last_run_duration_ms": state["last_run_duration_ms"],
+        },
+        "last_result": state["last_result"],
+        "last_error": state["last_error"],
+        "timestamp": datetime.utcnow().isoformat(),
+    }
+
+
+@app.get("/api/v1/ops/health")
+async def detailed_health(db: Session = Depends(get_db)):
+    checks = {}
+    overall = "ok"
+
+    try:
+        db.execute(text("SELECT 1"))
+        checks["database"] = {"status": "ok"}
+    except Exception as exc:
+        checks["database"] = {"status": "down", "error": str(exc)}
+        overall = "degraded"
+
+    provider_checks = etl_service.ingestion_service.providers_healthcheck()
+    checks["providers"] = provider_checks
+    if any(item.get("available") is False for item in provider_checks):
+        overall = "degraded"
+
+    with _ops_lock:
+        state = dict(_ops_state)
+    checks["etl_worker"] = {
+        "thread_alive": _etl_thread.is_alive() if _etl_thread else False,
+        "interval_seconds": state["etl_interval_seconds"],
+        "last_run_success": state["last_run_success"],
+        "last_run_finished_at": state["last_run_finished_at"],
+        "failed_runs": state["failed_runs"],
+    }
+    if not checks["etl_worker"]["thread_alive"]:
+        overall = "degraded"
+
+    return {
+        "status": overall,
+        "service": "trendtitan-api",
+        "version": "v1",
+        "timestamp": datetime.utcnow().isoformat(),
+        "checks": checks,
+    }
+
+
 if __name__ == "__main__":
     import uvicorn
     logger.info("Starting FastAPI application...")
     try:
+        host = os.getenv("UVICORN_HOST", "0.0.0.0")
+        port = int(os.getenv("UVICORN_PORT", "5001"))
+        log_level = os.getenv("LOG_LEVEL", "debug").lower()
         uvicorn.run(
             "main:app",
-            host="0.0.0.0",
-            port=5001,
+            host=host,
+            port=port,
             reload=True,
-            log_level="debug"
+            log_level=log_level
         )
     except Exception as e:
         logger.error(f"Failed to start FastAPI application: {str(e)}", exc_info=True)
